@@ -1,0 +1,19 @@
+{
+    "topology" : "triangle",
+    "polygonMode" : "fill",
+    "cullMode" : "none",
+    "frontFace" : "counterClockWise",
+    "depthTest" : true,
+    "stencilTest" : false,
+    "inputRate" : "vertex",
+    
+    "colorAttachmentDescs" : [
+        {
+            "numColorComponent" : 4
+        }
+    ],
+
+    "enableVertexAttribs" : false,
+    "vertSpvFilePath" : "Assets/Shaders/Spv/skybox.vert.spv",
+    "fragSpvFilePath" : "Assets/Shaders/Spv/skybox.frag.spv"
+}

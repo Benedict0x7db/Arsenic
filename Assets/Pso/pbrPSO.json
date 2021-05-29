@@ -1,0 +1,19 @@
+{
+    "topology" : "triangle",
+    "polygonMode" : "fill",
+    "cullMode" : "none",
+    "frontFace" : "counterClockWise",
+    "depthTest" : true,
+    "stencilTest" : false,
+    "inputRate" : "vertex",
+    
+    "colorAttachmentDescs" : [
+        {
+            "numColorComponent" : 4
+        }
+    ],
+
+    "enableVertexAttribs" : true,
+    "vertSpvFilePath" : "Assets/Shaders/Spv/vertex.vert.spv",
+    "fragSpvFilePath" : "Assets/Shaders/Spv/pbr.frag.spv"
+}

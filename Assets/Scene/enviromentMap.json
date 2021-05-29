@@ -1,0 +1,8 @@
+{
+    "right" : "Assets/Scene/posx.jpg",
+    "left" : "Assets/Scene/negx.jpg",
+    "top" : "Assets/Scene/posy.jpg",
+    "bottom" : "Assets/Scene/negy.jpg",
+    "forward" : "Assets/Scene/posz.jpg",
+    "backward" : "Assets/Scene/negz.jpg"
+}

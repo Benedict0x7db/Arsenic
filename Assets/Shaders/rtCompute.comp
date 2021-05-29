@@ -1,0 +1,147 @@
+#version 450
+
+#include "structures.glsl"
+#include "pbr.glsl"
+
+layout(local_size_x = 32, local_size_y = 32) in;
+
+struct HitRecord
+{
+    vec3 p;
+    vec3 normal;
+    vec3 viewDir;
+    int materialIndex;
+};
+
+ShadingMaterial getShadingMaterial(int materialIndex)
+{
+    Material material = _materialBuffer.materials[materialIndex];
+
+    ShadingMaterial shadingMaterial;
+    shadingMaterial.baseColor = material.baseColor.rgb;
+    shadingMaterial.roughness = material.roughness;
+    shadingMaterial.metalness = material.metalness;
+   // shadingMaterial.normal = normalize(inNormal);
+
+    return shadingMaterial;
+}
+
+vec3 toneMappingGamma(vec3 color)
+{
+    color = color / (color + 1.0f);
+    color = pow(color, vec3(1.0f / gamma));
+    
+    return color;
+}
+
+float invSquareLightFallout(float dist, float radius)
+{
+    float dDist = dist - radius;
+    return 1.0f / max((dDist * dDist), 0.001f);    
+}
+
+vec3 retrieveEnviromentColor(vec3 d)
+{
+    vec3 color = texture(sceneEnviromentMap, d).rgb;
+    //color = pow(color, vec3(1.0f / gamma));
+    
+    return color;
+}
+
+vec3 calculateDirectLightning(vec3 p, vec3 V, vec3 N, ShadingMaterial material)
+{
+    vec3 Lo = vec3(0.0f);
+    
+    for (int i = 0; i != _sceneBuffer.numLights; ++i) {
+        Light light = _lightBuffer.lights[i];
+               
+        switch (light.type) {
+            case 0: {
+                vec3 I = -normalize(light.position.xyz);
+                vec3 Li = light.color.rgb;
+                Lo += shade(I, V, N, Li, material);
+                break;
+            }
+        }
+    }
+    
+    return Lo;
+}
+
+vec3 calculateWorldFragPos(vec2 uv, vec2 resolution)
+{
+    float htan = tan(radians(_cameraBuffer.fov * 0.5f));
+    float left = -_cameraBuffer.znear * htan;
+    float right = -left;
+    float bottom = left / _cameraBuffer.aspect;
+    float top = -bottom;
+
+    vec3 viewFragPos;
+    viewFragPos.x = uv.x * (right - left) + left;
+    viewFragPos.y = uv.y * (bottom - top) + top;    
+    viewFragPos.z = -_cameraBuffer.znear;
+
+    return vec3(_cameraBuffer.invView * vec4(viewFragPos, 1.0f));
+}
+
+float rayTriangleIntersection(vec3 ro, vec3 rd, vec3 v0, vec3 v1, vec3 v2, float tMin, float tMax)
+{
+    vec3 e1 = v1 - v0;
+    vec3 e2 = v2 - v0;
+    vec3 a = ro - v0;
+    vec3 b = -rd;
+
+    float detA1 = dot(cross(e1, e2), b);
+    float detA2 = dot(cross(a, e2), b);
+    float detA3 = dot(cross(e1, a), b);
+    float detA4 = dot(cross(e1, e2), a);
+
+    if (abs(detA1) < 0.001f) {
+        return 0.0f;
+    }
+
+    float v = detA2 / detA1;
+    float w = detA3 / detA1;
+    float u = 1.0f - v - w;
+    float t = detA4 / detA1;
+
+    float k = abs(v + w + u) - 1.0f;
+
+    if ((abs(v + w + u) - 1.0f) > 0.0f) {
+        return 0.0f;
+    }
+
+    if (t > tMin && t < tMax) {
+        return t;
+    }
+
+    return 0.0f;
+}
+
+vec3 renderScene(vec3 ro, vec3 rd, float minDepth)
+{
+    float t = rayTriangleIntersection(ro, rd, vec3(-0.5f, -0.5f, -1.0f), vec3(0.5f, -0.5f, -2.0f), vec3(0.5f, 0.5f, -2.0f), 1.0f, 
+                        _sceneBuffer.maxRayDepth);
+
+    if (t != 0.0f) {
+        return vec3(1.0f, 0.0f, 0.0f);
+    }
+}
+
+void main()
+{
+    ivec2 fragCoord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 resolution = ivec2(imageSize(rtrenderTarget));
+    vec2 uv = vec2(fragCoord) / vec2(resolution);
+
+    vec3 worldFragPos = calculateWorldFragPos(uv, vec2(resolution));
+    vec3 rd = worldFragPos - _cameraBuffer.cameraPos.xyz;
+
+    vec3 enviromentColor = retrieveEnviromentColor(rd);
+
+    vec3 color = vec3(enviromentColor);
+    color = toneMappingGamma(color);
+
+    vec4 fragColor = vec4(color, 1.0f);
+    imageStore(rtrenderTarget, fragCoord, fragColor);    
+}
