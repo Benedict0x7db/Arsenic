@@ -18,7 +18,7 @@ namespace arsenic
         float aspect = 16.0f / 9.0f;
         float fov = 60.0f;
         float znear = 0.1f;
-        float zfar = 100.0f;
+        float zfar = std::numeric_limits<float>::max();
         math::vec2f lastMousePos;
         Mousecode rotationButton = Mousecode::ButtonRight;
         bool isRotateButtonPressed = false;

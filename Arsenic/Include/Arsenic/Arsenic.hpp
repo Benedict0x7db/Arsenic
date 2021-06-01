@@ -18,6 +18,8 @@
 #include "../../Arsenic/Source/Arsenic/Renderer/VulkanContext.hpp"
 #include "../../Arsenic/Source/Arsenic/Renderer/Handle.hpp"
 #include "../../Arsenic/Source/Arsenic/Renderer/Structure.hpp"
+#include "../../Arsenic/Source/Arsenic/Renderer/VulkanBuffer.hpp"
+#include "../../Arsenic/Source/Arsenic/Renderer/VulkanImage.hpp"
 #include "../../Arsenic/Source/Arsenic/Renderer/MaterialManager.hpp"
 #include "../../Arsenic/Source/Arsenic/Renderer/Shader.hpp"
 #include "../../Arsenic/Source/Arsenic/Renderer/Camera.hpp"

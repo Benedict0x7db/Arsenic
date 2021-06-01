@@ -10,9 +10,6 @@
 [submodule "External/entt"]
 	path = External/entt
 	url = https://github.com/Benedict0x7db/entt.git
-[submodule "External/assimp"]
-	path = External/assimp
-	url = https://github.com/Benedict0x7db/assimp.git
 [submodule "External/json"]
 	path = External/json
 	url = https://github.com/Benedict0x7db/json.git

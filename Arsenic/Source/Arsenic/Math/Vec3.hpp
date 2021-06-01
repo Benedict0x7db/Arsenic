@@ -45,6 +45,7 @@ namespace math
         {
         }
 
+
         constexpr Vec3(const Vec2<T> &vec2, const T z) noexcept : 
             x(vec2.x),
             y(vec2.y),

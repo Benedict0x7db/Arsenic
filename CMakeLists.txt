@@ -15,7 +15,6 @@ endif()
 add_subdirectory(External/glfw)
 add_subdirectory(External/spdlog)
 add_subdirectory(External/json)
-add_subdirectory(External/assimp)
 
 #Arsenic
 add_subdirectory(Arsenic)

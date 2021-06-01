@@ -36,17 +36,17 @@ namespace arsenic
         forwardDir.z = -std::cos(math::radians(rotation.x)) * std::cos(math::radians(rotation.y));
         forwardDir = math::normalize(forwardDir);
 
-        if (input::isKeyPressed(Keycode::A)) {
-            position += math::normalize(math::cross(forwardDir, math::vec3f(0.0f, 1.0f, 0.0f))) * cameraSpeed * dt;
-        }
-        if (input::isKeyPressed(Keycode::D)) {
-            position -= math::normalize(math::cross(forwardDir, math::vec3f(math::vec3f(0.0f, 1.0f, 0.0f)))) * cameraSpeed * dt;
-        }
         if (input::isKeyPressed(Keycode::W)) {
-            position += forwardDir * cameraSpeed * dt;
+            position -= forwardDir * cameraSpeed * dt;
         }
         if (input::isKeyPressed(Keycode::S)) {
-            position -= forwardDir * cameraSpeed * dt;
+            position += forwardDir * cameraSpeed * dt;
+        }
+        if (input::isKeyPressed(Keycode::A)) {
+            position -= math::normalize(math::cross(forwardDir, math::vec3f(0.0f, 1.0f, 0.0f))) * cameraSpeed * dt;
+        }
+        if (input::isKeyPressed(Keycode::D)) {
+            position += math::normalize(math::cross(forwardDir, math::vec3f(math::vec3f(0.0f, 1.0f, 0.0f)))) * cameraSpeed * dt;
         }
 
         updateViewMatrix();

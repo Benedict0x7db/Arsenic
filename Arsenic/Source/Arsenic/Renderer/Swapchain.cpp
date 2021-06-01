@@ -58,7 +58,7 @@ namespace arsenic
     static VkSurfaceFormatKHR chooseSwapchainFormat(const std::vector<VkSurfaceFormatKHR> &surfaceFormats)
     {
        for (const auto &surfaceFormat : surfaceFormats) {
-            if (surfaceFormat.format == VK_FORMAT_R8G8B8A8_SRGB && surfaceFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            if (surfaceFormat.format == VK_FORMAT_R8G8B8_SNORM && surfaceFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
                 return surfaceFormat;
             }
         }

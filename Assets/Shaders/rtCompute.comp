@@ -1,9 +1,12 @@
 #version 450
 
 #include "structures.glsl"
-#include "pbr.glsl"
 
 layout(local_size_x = 32, local_size_y = 32) in;
+
+#define PI 3.1415926535f
+#define GAMMA 2.2f
+#define MAX_REFLECTION 8
 
 struct HitRecord
 {
@@ -11,25 +14,18 @@ struct HitRecord
     vec3 normal;
     vec3 viewDir;
     int materialIndex;
+    int status;
 };
 
-ShadingMaterial getShadingMaterial(int materialIndex)
+Material getMaterial(int materialIndex)
 {
-    Material material = _materialBuffer.materials[materialIndex];
-
-    ShadingMaterial shadingMaterial;
-    shadingMaterial.baseColor = material.baseColor.rgb;
-    shadingMaterial.roughness = material.roughness;
-    shadingMaterial.metalness = material.metalness;
-   // shadingMaterial.normal = normalize(inNormal);
-
-    return shadingMaterial;
+    return _materialBuffer.materials[materialIndex];
 }
 
 vec3 toneMappingGamma(vec3 color)
 {
     color = color / (color + 1.0f);
-    color = pow(color, vec3(1.0f / gamma));
+    color = pow(color, vec3(1.0f / GAMMA));
     
     return color;
 }
@@ -43,29 +39,8 @@ float invSquareLightFallout(float dist, float radius)
 vec3 retrieveEnviromentColor(vec3 d)
 {
     vec3 color = texture(sceneEnviromentMap, d).rgb;
-    //color = pow(color, vec3(1.0f / gamma));
-    
+    //color = pow(color, vec3(1.0f / GAMMA));
     return color;
-}
-
-vec3 calculateDirectLightning(vec3 p, vec3 V, vec3 N, ShadingMaterial material)
-{
-    vec3 Lo = vec3(0.0f);
-    
-    for (int i = 0; i != _sceneBuffer.numLights; ++i) {
-        Light light = _lightBuffer.lights[i];
-               
-        switch (light.type) {
-            case 0: {
-                vec3 I = -normalize(light.position.xyz);
-                vec3 Li = light.color.rgb;
-                Lo += shade(I, V, N, Li, material);
-                break;
-            }
-        }
-    }
-    
-    return Lo;
 }
 
 vec3 calculateWorldFragPos(vec2 uv, vec2 resolution)
@@ -84,48 +59,191 @@ vec3 calculateWorldFragPos(vec2 uv, vec2 resolution)
     return vec3(_cameraBuffer.invView * vec4(viewFragPos, 1.0f));
 }
 
-float rayTriangleIntersection(vec3 ro, vec3 rd, vec3 v0, vec3 v1, vec3 v2, float tMin, float tMax)
+float raySphereIntersection(vec3 o, vec3 d, vec3 c, float r, float tmin, float tmax)
 {
-    vec3 e1 = v1 - v0;
-    vec3 e2 = v2 - v0;
-    vec3 a = ro - v0;
-    vec3 b = -rd;
+    vec3 oc = o - c;
 
-    float detA1 = dot(cross(e1, e2), b);
-    float detA2 = dot(cross(a, e2), b);
-    float detA3 = dot(cross(e1, a), b);
-    float detA4 = dot(cross(e1, e2), a);
+    float k1 = dot(d, d);
+    float k2 = 2.0f * dot(oc, d);
+    float k3 = dot(oc, oc) - (r * r);
 
-    if (abs(detA1) < 0.001f) {
+    float discrimiant = (k2 * k2) - (4.0f * k1 * k3);
+
+    if (discrimiant < 0.0f) {
         return 0.0f;
     }
 
-    float v = detA2 / detA1;
-    float w = detA3 / detA1;
-    float u = 1.0f - v - w;
-    float t = detA4 / detA1;
+    float sqrtDiscrimiant = sqrt(discrimiant);
+    float t1 = (-k2 + sqrtDiscrimiant) / (2.0f * k1);
+    float t2 = (-k2 - sqrtDiscrimiant) / (2.0f * k1);
+    float t = min(t1, t2);
 
-    float k = abs(v + w + u) - 1.0f;
-
-    if ((abs(v + w + u) - 1.0f) > 0.0f) {
-        return 0.0f;
-    }
-
-    if (t > tMin && t < tMax) {
+    if (t > tmin && t < tmax) {
         return t;
     }
 
     return 0.0f;
 }
 
-vec3 renderScene(vec3 ro, vec3 rd, float minDepth)
+HitRecord castRay(vec3 o, vec3 d, float tmin, float tmax)
 {
-    float t = rayTriangleIntersection(ro, rd, vec3(-0.5f, -0.5f, -1.0f), vec3(0.5f, -0.5f, -2.0f), vec3(0.5f, 0.5f, -2.0f), 1.0f, 
-                        _sceneBuffer.maxRayDepth);
+    int sphereMeshIndex = -1;
 
-    if (t != 0.0f) {
-        return vec3(1.0f, 0.0f, 0.0f);
+    for (int i = 0; i != _sceneBuffer.numSphereMesh; ++i) {
+        SphereMesh sphereMesh = _sphereMeshBuffer.sphereMeshes[i];
+        float t = raySphereIntersection(o, d, sphereMesh.center, sphereMesh.radius, tmin, tmax);
+
+        if (t != 0.0f) {
+            sphereMeshIndex = i;
+            tmax = t;
+        }
     }
+
+    HitRecord hitRecord;
+    hitRecord.status = 0;
+
+    if (sphereMeshIndex != -1) {
+        SphereMesh sphereMesh = _sphereMeshBuffer.sphereMeshes[sphereMeshIndex];
+
+        hitRecord.status = 1;
+        hitRecord.p = o + tmax * d;
+        hitRecord.normal = normalize(hitRecord.p - sphereMesh.center);
+        hitRecord.viewDir = normalize(-d);
+        hitRecord.materialIndex = sphereMesh.materialIndex;
+    }
+
+    return hitRecord;
+}
+
+float D_ggx(vec3 N, vec3 H, float roughness)
+{      
+    float a2     = roughness * roughness;
+    float NdotH  = max(dot(N, H), 0.0f);
+    float NdotH2 = NdotH * NdotH;
+	
+    float nom    = a2;
+    float denom  = NdotH2 * (a2 - 1.0f) + 1.0f;
+    denom        = PI * denom * denom;
+	
+    return nom / max(denom, 0.001f);
+}
+
+float G_schlickGGX(float NdotV, float roughness)
+{
+    float k = roughness + 1.0f;
+    k = (k * k) / 8.0f;
+    
+    float nom   = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+	
+    return nom / denom;
+}
+  
+float G_smith(vec3 N, vec3 V, vec3 L, float roughness)
+{
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx1  = G_schlickGGX(NdotV, roughness);
+    float ggx2  = G_schlickGGX(NdotL, roughness);
+	
+    return ggx1 * ggx2;
+}
+
+vec3 F_schlick(float cosTheta, vec3 F0)
+{
+    return F0 + (1.0f - F0) * pow(1.0f - cosTheta, 5.0f);
+}
+
+vec3 shade(vec3 I, vec3 V, vec3 N, vec3 Li, Material material)
+{
+    float roughness    = material.roughness;
+    float metalness    = material.metalness;
+    vec3 baseColor     = material.baseColor.rgb;
+
+    vec3 H          = normalize(I + V);
+    float NdotI     = max(dot(N, I), 0.0f);
+    float NdotV     = max(dot(N, V), 0.0f);
+    float NdotH     = max(dot(N, H), 0.0f);
+    float HdotI     = max(dot(H, I), 0.0f);
+    
+    vec3 F0 = vec3(0.04f);
+    F0 = mix(F0, baseColor, metalness);
+
+    float D = D_ggx(N, H, roughness);
+    vec3 F  = F_schlick(HdotI, F0);
+    float G = G_smith(N, V, I, roughness);
+    
+    vec3 norm    = D * F * G;
+    float denorm = 4.0f * NdotV * NdotI;
+    vec3 kd      = (1.0f - F) * (1.0f - metalness);   
+   
+    vec3 fs = norm / max(denorm, 0.0001f);
+    vec3 fd = kd * (baseColor / PI);
+
+    vec3 Lo = (fd + fs) * Li * NdotI;
+    Lo += vec3(0.01f) * baseColor * Li;
+
+    return Lo;
+}
+
+vec3 calculateDirectLightning(vec3 p, vec3 V, vec3 N, Material material)
+{
+    vec3 Lo = vec3(0.0f);
+    
+    for (int i = 0; i != _sceneBuffer.numLights; ++i) {
+        Light light = _lightBuffer.lights[i];
+               
+        switch (light.type) {
+            case 0: {
+                vec3 I = -normalize(light.position.xyz);
+                vec3 Li = light.color.rgb;
+                Lo += shade(I, V, N, Li, material);
+                break;
+            }
+        }
+    }
+       
+    return Lo;
+}
+
+vec3 calculateIndirectReflection(vec3 p, vec3 n, vec3 d)
+{
+    HitRecord reflectionRecords[MAX_REFLECTION];
+    int reflectRecordCount = 0;
+
+    for (int i = 0; i != _sceneBuffer.numIndirectReflect && i != MAX_REFLECTION; ++i) {
+        vec3 r = reflect(d, n);
+        HitRecord hitRecord = castRay(p, r, 0.0f, _sceneBuffer.maxRayDepth);
+
+        if (hitRecord.status == 1.0f) {
+            d = r;
+            n = hitRecord.normal;
+            p = hitRecord.p;
+            reflectionRecords[i] = hitRecord;
+            ++reflectRecordCount;
+        }
+    }
+
+    if (reflectRecordCount == 0) {
+        return retrieveEnviromentColor(reflect(d, n)).rgb;
+    }
+
+    vec3 Lo = vec3(0.0f);
+
+    for (int i = reflectRecordCount - 1; i != reflectRecordCount; ++i) {
+        HitRecord hitRecord = reflectionRecords[i];
+        Material material = getMaterial(hitRecord.materialIndex);
+
+        vec3 directLightning = calculateDirectLightning(hitRecord.p, hitRecord.viewDir, hitRecord.normal, material);
+
+        vec3 r = normalize(reflect(-hitRecord.viewDir, hitRecord.normal));
+        vec3 Li = Lo;
+        vec3 indirectLightning = shade(r, hitRecord.viewDir, hitRecord.normal, Li, material);
+
+        Lo = directLightning + indirectLightning;
+    }
+
+    return Lo;
 }
 
 void main()
@@ -135,12 +253,31 @@ void main()
     vec2 uv = vec2(fragCoord) / vec2(resolution);
 
     vec3 worldFragPos = calculateWorldFragPos(uv, vec2(resolution));
-    vec3 rd = worldFragPos - _cameraBuffer.cameraPos.xyz;
+    vec3 o = _cameraBuffer.cameraPos.xyz;
+    vec3 d = worldFragPos - o;
 
-    vec3 enviromentColor = retrieveEnviromentColor(rd);
+    vec3 Lo = retrieveEnviromentColor(d);
+    HitRecord hitRecord = castRay(o, d, _cameraBuffer.znear, _cameraBuffer.zfar);
 
-    vec3 color = vec3(enviromentColor);
-    color = toneMappingGamma(color);
+    if (hitRecord.status == 1) {
+       Material material = getMaterial(hitRecord.materialIndex);
+       
+       {
+           vec3 I = normalize(-reflect(hitRecord.viewDir, hitRecord.normal));
+           vec3 Li = calculateIndirectReflection(hitRecord.p, hitRecord.normal, d);
+           Lo = shade(I, hitRecord.viewDir, hitRecord.normal, Li, material);
+       }
+
+       {
+           vec3 I = hitRecord.normal;
+           vec3 Li = calculateIndirectReflection(hitRecord.p, hitRecord.normal, hitRecord.normal);
+           Lo += shade(I, hitRecord.viewDir, hitRecord.normal, Li, material);
+       }
+
+       Lo += calculateDirectLightning(hitRecord.p, hitRecord.viewDir, hitRecord.normal, material);
+    }
+
+    vec3 color = toneMappingGamma(Lo);
 
     vec4 fragColor = vec4(color, 1.0f);
     imageStore(rtrenderTarget, fragCoord, fragColor);    

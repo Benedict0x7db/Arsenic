@@ -15,9 +15,3 @@ add_executable(ArsenicSandbox ${ARSENIC_SANDBOX_SOURCE})
 target_link_libraries(ArsenicSandbox Arsenic)
 
 target_include_directories(ArsenicSandbox PRIVATE ${CMAKE_SOURCE_DIR}/Arsenic/Include)
-
-add_custom_command(TARGET ArsenicSandbox PRE_BUILD 
-COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/Assets $<TARGET_FILE_DIR:ArsenicSandbox>/Assets)
-
-add_custom_command(TARGET ArsenicSandbox POST_BUILD 
-COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/Assets $<TARGET_FILE_DIR:ArsenicSandbox>/Assets)

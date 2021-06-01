@@ -23,7 +23,11 @@ namespace arsenic
         setupImGui();
         setupShaderResource();
 
-        _sceneEnviromentMap = _vulkanContext.createImageCube(TextureFormat::RGBAU8, "Assets/Scene/enviromentMap.json");
+        _sceneEnviromentMap = loadCubeImage2DFromFile(_vulkanContext, "Assets/Scene/enviromentMap.json");
+        _sceneEnviromentMap.vkImageView = createImageView(_vulkanContext, _sceneEnviromentMap.vkImage, VK_IMAGE_VIEW_TYPE_CUBE, 
+                                                    _sceneEnviromentMap.format, VK_IMAGE_ASPECT_COLOR_BIT,
+                                                    0, _sceneEnviromentMap.arrayLayers, 0, _sceneEnviromentMap.mipLevels);
+
         _generalSampler = _materialManager.createSampler(_vulkanContext);
 
         _rtShaderEffect = buildComputeShaderEffect(_vulkanContext, "Assets/Shaders/Spv/rtCompute.comp.spv");
@@ -38,8 +42,13 @@ namespace arsenic
         _camera.initialize(_swapchain.imageExtent.width, _swapchain.imageExtent.height);
         _cameraBuffer.proj = _camera.projMatrix;
         _cameraBuffer.invProj = math::inverse(_camera.projMatrix);
+    
+        _sphereEntity = _scene.createEntity();
+        _sphereEntity.addComponent<SphereMesh>();
+        _sphereEntity.addComponent<Material>();
 
         _dirLightEntity = _scene.createEntity();
+        _dirLightEntity.getComponent<Transform>().position = math::vec3f(0.0f, -1.0f, 0.0f);
         _dirLightEntity.addComponent<DirectionLight>();
     }       
     
@@ -67,34 +76,34 @@ namespace arsenic
         _cameraBuffer.fov = _camera.fov;
         _cameraBuffer.aspect = _camera.aspect;
         _cameraBuffer.znear = _camera.znear;
+        _cameraBuffer.zfar = _camera.zfar;
         _cameraBuffer.view = _camera.viewMatrix;
         _cameraBuffer.invView = math::inverse(_camera.viewMatrix);
     }
     
     void SandboxLayer::onRender()
     {
-        _renderObjects.clear();
-        _meshObjects.clear();
+        _sphereMeshes.clear();
         _lights.clear();
         _materials.clear();
         
         auto &registry = _scene.getRegistry();
 
         {
-            auto view = registry.view<Mesh, Material, Transform>();
+            auto view = registry.view<SphereMesh, Material, Transform>();
 
-            view.each([this](const auto entity, const Mesh &mesh, const Material &material, const Transform &transform) {
+            view.each([this](const auto entity, const SphereMesh &mesh, const Material &material, const Transform &transform) {
                 _materials.emplace_back(material);
 
-                RenderObject renderObject = {};
-                renderObject.transformMatrix = transform.getModelMatrix();
-                renderObject.materialIndex = _materials.size() - 1;
-                _renderObjects.emplace_back(renderObject);
+                math::mat4f modelMatrix = transform.getModelMatrix();
+                math::vec4f sphereCenter = modelMatrix * math::vec4f(transform.position, 1.0f);
+                
+                SphereMesh sphereMesh = {};
+                sphereMesh.center = math::vec3f(sphereCenter.x, sphereCenter.y, sphereCenter.z);
+                sphereMesh.radius = mesh.radius;
+                sphereMesh.materialIndex = _materials.size() - 1;
 
-                MeshObject meshObject = {};
-                meshObject.pMesh = &mesh;
-                meshObject.renderObjectIndex = _renderObjects.size() - 1;
-                _meshObjects.emplace_back(meshObject);
+                _sphereMeshes.emplace_back(sphereMesh);
             });
         }
 
@@ -120,11 +129,17 @@ namespace arsenic
         static constexpr float dragMax = std::numeric_limits<float>::max();
 
         ImGui::Begin("Scene");
-
+        {
+            ImGui::Text("Scene settings");
+            ImGui::SliderInt("Num reflection", &_sceneBuffer.numIndirectReflect, 0, 8);
+        }
+        ImGui::Separator();
         {
             ImGui::Text("Camera");
             
             ImGui::DragFloat3("Position ##camera", &_camera.position.x, dragSpeed, dragMin, dragMax);
+            ImGui::DragFloat3("Rotation ##camera", &_camera.rotation.x, dragSpeed, dragMin, dragMax);
+            ImGui::DragFloat("Speed ##camera", &_camera.cameraSpeed, dragSpeed, dragMin, dragMax);
             ImGui::DragFloat("Fov ##camera", &_camera.fov, dragSpeed, 1.0f, 179.0f);
 
             _camera.updateProjMatrix();
@@ -133,15 +148,30 @@ namespace arsenic
         }
         ImGui::Separator();
         {
+            Transform &transform = _sphereEntity.getComponent<Transform>();
+            Material &material = _sphereEntity.getComponent<Material>();
+            SphereMesh &sphereMesh = _sphereEntity.getComponent<SphereMesh>();
+            
+            ImGui::Text("Sphere");
+            ImGui::DragFloat3("Position ##Sphere Light", &transform.position.x, dragSpeed, dragMin, dragMax);
+            ImGui::DragFloat3("Rotation ##Sphere Light", &transform.rotation.x, dragSpeed, dragMin, dragMax);
+            ImGui::DragFloat("Radius", &sphereMesh.radius, dragSpeed, dragMin, dragMax);
+            ImGui::ColorEdit3("Base color", &material.baseColor.x);
+            ImGui::SliderFloat("Roughness", &material.roughness, 0.0f, 1.0f);
+            ImGui::SliderFloat("Metalness",&material.metalness, 0.0f, 1.0f);
+
+            sphereMesh.radius = std::max(sphereMesh.radius, 0.0f);
+        }
+        ImGui::Separator();
+        {
             Transform &transform = _dirLightEntity.getComponent<Transform>();
             DirectionLight &dirLight = _dirLightEntity.getComponent<DirectionLight>();
 
             ImGui::Text("Direction Light");
-            
             ImGui::DragFloat3("Direction ##Direction Light", &transform.position.x, dragSpeed, dragMin, dragMax);
             ImGui::DragFloat3("Rotation ##Direction Light", &transform.rotation.x, dragSpeed, dragMin, dragMax);
             ImGui::ColorEdit3("Color ##Direction Light", &dirLight.color.x);
-            ImGui::DragFloat("Intensity ##Direction Light", &dirLight.intensity, dragSpeed, dragMin,dragMax);
+            ImGui::DragFloat("Intensity ##Direction Light", &dirLight.intensity, dragSpeed, 0.0f,dragMax);
         }
 
         ImGui::End();
@@ -220,18 +250,21 @@ namespace arsenic
             _renderTarget.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         }
 
-        const VulkanBuffer &gpuRenderObjectBuffer = _gpuRenderObjectBuffers.value[_currentFrame];
+        const VulkanBuffer &gpuSphereBuffer = _gpuSphereBuffers.value[_currentFrame];
         const VulkanBuffer &gpuLightBuffer = _gpuLightBuffers.value[_currentFrame];
         const VulkanBuffer &gpuMaterialBuffer = _gpuMaterialBuffers.value[_currentFrame];
     
-        for (std::size_t i = 0; i != _renderObjects.size() && i != maxRenderObjects; ++i) {
-            std::memcpy(gpuRenderObjectBuffer.pMappedPointer + i * sizeof(RenderObject), &_renderObjects[i], sizeof(RenderObject));
-            ++_sceneBuffer.numLights;
-        }
+        _sceneBuffer.numLights = 0;
+        _sceneBuffer.numSphereMeshes = 0;
 
+        for (std::size_t i = 0; i != _sphereMeshes.size() && i != maxSphereMeshes; ++i) {
+            std::memcpy(gpuSphereBuffer.pMappedPointer + i * sizeof(SphereMesh), &_sphereMeshes[i], sizeof(SphereMesh));
+            ++_sceneBuffer.numSphereMeshes;
+        }
                 
         for (std::size_t i = 0; i != _lights.size() && i != maxLights; ++i) {
             std::memcpy(gpuLightBuffer.pMappedPointer + i * sizeof(Light), &_lights[i], sizeof(Light));
+            ++_sceneBuffer.numLights;
         }
 
         for (std::size_t i = 0; i != _materials.size() && i != maxMaterials; ++i) {
@@ -337,41 +370,25 @@ namespace arsenic
     void SandboxLayer::setupShaderResource()
     {
         for (std::size_t i = 0; i != maxFrameInFlight; ++i) {
-            BufferDesc sceneBufferDesc = {};
-            sceneBufferDesc.size = sizeof(SceneBuffer);
-            sceneBufferDesc.type = BufferType::Uniform;
-            sceneBufferDesc.usage = BufferUsage::Dynamic;
+            _gpuSceneBuffers.value[i] = createBuffer(_vulkanContext, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                            sizeof(SceneBuffer));
 
-            _gpuSceneBuffers.value[i] = _vulkanContext.createBuffer(sceneBufferDesc, nullptr);
+            _gpuCameraBuffers.value[i] = createBuffer(_vulkanContext, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+                                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                                    sizeof(CameraBuffer));
 
-            BufferDesc cameraBufferDesc = {};
-            cameraBufferDesc.size = sizeof(CameraBuffer);
-            cameraBufferDesc.type = BufferType::Uniform;
-            cameraBufferDesc.usage = BufferUsage::Dynamic;  
+            _gpuSphereBuffers.value[i] = createBuffer(_vulkanContext, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 
+                                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                                    sizeof(SphereMesh) * maxSphereMeshes);
 
-            _gpuCameraBuffers.value[i] = _vulkanContext.createBuffer(cameraBufferDesc, nullptr);
+            _gpuLightBuffers.value[i] = createBuffer(_vulkanContext, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 
+                                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                                    sizeof(Light) * maxLights);
 
-            BufferDesc renderObjectBufferDesc = {};
-            renderObjectBufferDesc.size = sizeof(RenderObject) * maxRenderObjects;
-            renderObjectBufferDesc.type = BufferType::Storage;
-            renderObjectBufferDesc.usage = BufferUsage::Dynamic;
-
-            _gpuRenderObjectBuffers.value[i] = _vulkanContext.createBuffer(renderObjectBufferDesc, nullptr);
-        
-            BufferDesc lightBufferDesc = {};
-            lightBufferDesc.size = sizeof(Light) * maxLights;
-            lightBufferDesc.type = BufferType::Storage;
-            lightBufferDesc.usage = BufferUsage::Dynamic;
-
-            _gpuLightBuffers.value[i] = _vulkanContext.createBuffer(lightBufferDesc, nullptr);
-
-
-            BufferDesc materialBufferDesc = {};
-            materialBufferDesc.size = sizeof(Material) * maxMaterials;
-            materialBufferDesc.type = BufferType::Storage;
-            materialBufferDesc.usage = BufferUsage::Dynamic;
-
-            _gpuMaterialBuffers.value[i] = _vulkanContext.createBuffer(materialBufferDesc, nullptr);
+            _gpuMaterialBuffers.value[i] = createBuffer(_vulkanContext, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 
+                                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                                    sizeof(Material) * maxMaterials);
         }        
     }
 
@@ -408,7 +425,7 @@ namespace arsenic
         for (std::size_t i = 0; i != maxFrameInFlight; ++i) {
             const VulkanBuffer &gpuSceneBuffer = _gpuSceneBuffers.value[i];
             const VulkanBuffer &gpuCameraBuffer = _gpuCameraBuffers.value[i];
-            const VulkanBuffer &gpuRenderObjectBuffer = _gpuRenderObjectBuffers.value[i];
+            const VulkanBuffer &gpuSphereBuffer = _gpuSphereBuffers.value[i];
             const VulkanBuffer &gpuLightBuffer = _gpuLightBuffers.value[i];
             const VulkanBuffer &gpuMaterialBuffer = _gpuMaterialBuffers.value[i];
 
@@ -438,9 +455,9 @@ namespace arsenic
             writeDescriptors[1].dstArrayElement = 0;
             writeDescriptors[1].pBufferInfo = &gpuCameraDescriptorBufferInfo;
 
-            VkDescriptorBufferInfo gpuRenderObjectDescriptorBufferInfo = {};
-            gpuRenderObjectDescriptorBufferInfo.buffer = gpuRenderObjectBuffer.vkBuffer;
-            gpuRenderObjectDescriptorBufferInfo.range = gpuRenderObjectBuffer.size;
+            VkDescriptorBufferInfo gpuSphereDescriptorBufferInfo = {};
+            gpuSphereDescriptorBufferInfo.buffer = gpuSphereBuffer.vkBuffer;
+            gpuSphereDescriptorBufferInfo.range = gpuSphereBuffer.size;
 
             writeDescriptors[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writeDescriptors[3].dstSet = _globalDescriptorSet.value[i];
@@ -448,7 +465,7 @@ namespace arsenic
             writeDescriptors[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             writeDescriptors[3].descriptorCount = 1;
             writeDescriptors[3].dstArrayElement = 0;
-            writeDescriptors[3].pBufferInfo = &gpuRenderObjectDescriptorBufferInfo;
+            writeDescriptors[3].pBufferInfo = &gpuSphereDescriptorBufferInfo;
 
             VkDescriptorBufferInfo gpuLightDescriptorBufferInfo = {};
             gpuLightDescriptorBufferInfo.buffer = gpuLightBuffer.vkBuffer;
@@ -556,89 +573,42 @@ namespace arsenic
     void SandboxLayer::createRenderTarget()
     {
         const VkFormat format = _vulkanContext.findSupportedFormat({VK_FORMAT_R8G8B8A8_SNORM}, VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
-        _renderTarget.vkFormat = format;
-        _renderTarget.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+     
+        const VulkanImageDesc imageDesc = VulkanImageDesc::create(VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                                                {_renderTargetExtent.width, _renderTargetExtent.height, 1},
+                                                                format, 1, false);
 
-        VkImageCreateInfo imageCI = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        imageCI.imageType = VK_IMAGE_TYPE_2D;
-        imageCI.extent = { _renderTargetExtent.width, _renderTargetExtent.height, 1 };
-        imageCI.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        imageCI.format = format;
-        imageCI.arrayLayers = 1;
-        imageCI.mipLevels = 1;
-        imageCI.samples = VK_SAMPLE_COUNT_1_BIT;
-        imageCI.tiling = VK_IMAGE_TILING_OPTIMAL;
-        imageCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        imageCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        
-        VmaAllocationCreateInfo vmaAllocationCI = {};
-        vmaAllocationCI.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-
-        checkVkResult(vmaCreateImage(_vulkanContext.vmaAllocator, &imageCI, &vmaAllocationCI, &_renderTarget.vkImage, &_renderTarget.vmaAllocation, nullptr));
-
-        VkImageViewCreateInfo imageviewCI = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        imageviewCI.image = _renderTarget.vkImage;
-        imageviewCI.format = _renderTarget.vkFormat;
-        imageviewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        imageviewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        imageviewCI.subresourceRange.baseArrayLayer = 0;
-        imageviewCI.subresourceRange.layerCount = 1;
-        imageviewCI.subresourceRange.baseMipLevel = 0;
-        imageviewCI.subresourceRange.levelCount = 1;
-
-        checkVkResult(vkCreateImageView(_vulkanContext.device, &imageviewCI, nullptr, &_renderTarget.vkImageView));
+        _renderTarget = createImage2D(_vulkanContext, imageDesc);
+        _renderTarget.vkImageView = createImageView(_vulkanContext, _renderTarget.vkImage, VK_IMAGE_VIEW_TYPE_2D,
+                                                format, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
     }
         
     void SandboxLayer::destroyRenderTarget()
     {
+        destroyImage(_vulkanContext, _renderTarget);
         vkDestroyImageView(_vulkanContext.device, _renderTarget.vkImageView, nullptr);
-        vmaDestroyImage(_vulkanContext.vmaAllocator, _renderTarget.vkImage, _renderTarget.vmaAllocation);
         _renderTarget = {};
     }
 
     void SandboxLayer::createDepthTexture()
     {
-        VkFormat vkFormat = _vulkanContext.findSupportedFormat({VK_FORMAT_D24_UNORM_S8_UINT}, 
+        const VkFormat format = _vulkanContext.findSupportedFormat({VK_FORMAT_D24_UNORM_S8_UINT}, 
                                                 VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
 
-        _depthTexture.vkFormat = vkFormat;
+        const VulkanImageDesc imageDesc = VulkanImageDesc::create(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, 
+                                                    {_swapchain.imageExtent.width, _swapchain.imageExtent.height, 1},
+                                                    format, 1, false);
 
-        VkImageCreateInfo imageCI = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        imageCI.format = vkFormat;
-        imageCI.extent.width = _swapchain.imageExtent.width;
-        imageCI.extent.height = _swapchain.imageExtent.height;
-        imageCI.extent.depth = 1;
-        imageCI.imageType = VK_IMAGE_TYPE_2D;
-        imageCI.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-        imageCI.mipLevels = 1;
-        imageCI.arrayLayers = 1;
-        imageCI.samples = VK_SAMPLE_COUNT_1_BIT;
-        imageCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        imageCI.tiling = VK_IMAGE_TILING_OPTIMAL;
-        imageCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        VmaAllocationCreateInfo vmaAllocationCI = {};
-        vmaAllocationCI.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-
-        checkVkResult(vmaCreateImage(_vulkanContext.vmaAllocator, &imageCI, &vmaAllocationCI, &_depthTexture.vkImage, &_depthTexture.vmaAllocation, nullptr));
-
-        VkImageViewCreateInfo imageviewCI = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-        imageviewCI.image = _depthTexture.vkImage;
-        imageviewCI.format = vkFormat;
-        imageviewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        imageviewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-        imageviewCI.subresourceRange.baseArrayLayer = 0;
-        imageviewCI.subresourceRange.layerCount = imageCI.arrayLayers;
-        imageviewCI.subresourceRange.baseMipLevel = 0;
-        imageviewCI.subresourceRange.levelCount = imageCI.mipLevels;
-
-        checkVkResult(vkCreateImageView(_vulkanContext.device, &imageviewCI, nullptr, &_depthTexture.vkImageView));
+        _depthTexture = createImage2D(_vulkanContext, imageDesc);
+        _depthTexture.vkImageView = createImageView(_vulkanContext, _depthTexture.vkImage, VK_IMAGE_VIEW_TYPE_2D, 
+                                                format, VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1);
+     
     }
 
     void SandboxLayer::destroyDepthTexture()
     {
+        destroyImage(_vulkanContext, _depthTexture);
         vkDestroyImageView(_vulkanContext.device, _depthTexture.vkImageView, nullptr);
-        vmaDestroyImage(_vulkanContext.vmaAllocator, _depthTexture.vkImage, _depthTexture.vmaAllocation);
         _depthTexture = {};
     }
 
@@ -656,7 +626,7 @@ namespace arsenic
         attachmentDesc[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
         // depth attachment
-        attachmentDesc[1].format = _depthTexture.vkFormat;
+        attachmentDesc[1].format = _depthTexture.format;
         attachmentDesc[1].samples = VK_SAMPLE_COUNT_1_BIT;
         attachmentDesc[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         attachmentDesc[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;

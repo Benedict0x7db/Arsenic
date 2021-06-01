@@ -1,13 +1,14 @@
 #ifndef STRUCTURES_GLSL
 #define STRUCTURES_GLSL
 
-struct RenderObject
+struct SphereMesh
 {
-    mat4 transformMatrix;
+    vec3 center;
+    float radius;
     int materialIndex;
+    int pad0;
     int pad1;
     int pad2;
-    int pad3;
 };
 
 struct Light
@@ -23,11 +24,11 @@ struct Light
 
 struct Material
 {
-    int baseColorMapIndex;
-    int roughnessMapIndex;
-    int metalicMapIndex;
-    int emissiveMapIndex;
-    int normalMapIndex;
+    int baseColorMap;
+    int roughnessMap;
+    int metallicMap;
+    int emissiveMap;
+    int normalMap;
     float roughness;
     float metalness;
     int samplerIndex;
@@ -35,20 +36,13 @@ struct Material
     vec4 emissiveColor;
 };
 
-struct ShadingMaterial
-{
-    vec3 baseColor;
-    float roughness;
-    vec3 emissiveColor;
-    float metalness;
-    vec3 normal;
-    float pad;
-};
-
 layout(set = 0, binding = 0) uniform SceneBuffer
 {
     int numLights;
-    float maxRayDepth;
+    int numSphereMesh;
+    int numIndirectReflect;
+    int numIndirectionRefract;
+    int maxRayDepth;
 } _sceneBuffer;
 
 layout(set = 0, binding = 1) uniform CameraBuffer
@@ -58,16 +52,20 @@ layout(set = 0, binding = 1) uniform CameraBuffer
     mat4 proj;
     mat4 invView;
     mat4 invProj;    
+    float aspect;
     float fov;
     float znear;
-    float aspect;
+    float zfar;
     int samplerPerPixel;
+    int pad0;
+    int pad1;
+    int pad2;
 } _cameraBuffer;
 
-layout(set = 0, binding = 2) buffer readonly RenderObjectBuffer
+layout(set = 0, binding = 2) buffer readonly SphereMeshBuffer
 {
-    RenderObject renderObjects[];
-} _renderObjectBuffer;
+    SphereMesh sphereMeshes[];
+} _sphereMeshBuffer;
 
 layout(set = 0, binding = 3) buffer readonly LightBuffer
 {

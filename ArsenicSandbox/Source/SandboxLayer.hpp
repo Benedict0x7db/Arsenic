@@ -4,7 +4,7 @@
 
 namespace arsenic
 {
-    constexpr std::size_t maxRenderObjects = 1E6;
+    constexpr std::size_t maxSphereMeshes = 10;
     constexpr std::size_t maxMaterials = 1E6;
     constexpr std::size_t maxLights = 1E6;
 
@@ -65,14 +65,13 @@ namespace arsenic
 
         PerFrame<VulkanBuffer> _gpuSceneBuffers;
         PerFrame<VulkanBuffer> _gpuCameraBuffers;
-        PerFrame<VulkanBuffer> _gpuRenderObjectBuffers;
+        PerFrame<VulkanBuffer> _gpuSphereBuffers;
         PerFrame<VulkanBuffer> _gpuLightBuffers;
         PerFrame<VulkanBuffer> _gpuMaterialBuffers;
 
         SceneBuffer _sceneBuffer;
         CameraBuffer _cameraBuffer;
-        std::vector<MeshObject> _meshObjects;
-        std::vector<RenderObject> _renderObjects;
+        std::vector<SphereMesh> _sphereMeshes;
         std::vector<Light> _lights;
         std::vector<Material> _materials;
         
@@ -87,7 +86,7 @@ namespace arsenic
         Scene _scene;
         Camera _camera;
 
-        Entity _cubeEntity;
+        Entity _sphereEntity;
         Entity _dirLightEntity;
     };
 } 

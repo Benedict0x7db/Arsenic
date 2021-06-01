@@ -15,12 +15,10 @@ target_link_libraries(Arsenic PUBLIC
 ${Vulkan_LIBRARIES}
 glfw
 spdlog
-assimp
 nlohmann_json)
 
 target_include_directories(Arsenic PUBLIC
 ${Vulkan_INCLUDE_DIRS}
-${CMAKE_SOURCE_DIR}/External/assimp/include
 ${CMAKE_SOURCE_DIR}/External/vma
 ${CMAKE_SOURCE_DIR}/External/spv_reflect
 ${CMAKE_CURRENT_SOURCE_DIR}/Source

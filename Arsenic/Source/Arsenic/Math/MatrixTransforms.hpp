@@ -91,11 +91,11 @@ namespace math
     }
 
     template<typename T = float>
-    constexpr Mat4<T> lookAt(const Vec3<T> &eye, const Vec3<T> &center, const Vec3<T> &up) noexcept
+    constexpr Mat4<T> lookAt(const Vec3<T> &eye, const Vec3<T> &target, const Vec3<T> &up) noexcept
     {
-        const Vec3<T> forward(normalize(center - eye));
-        const Vec3<T> right(normalize(cross(forward, up)));
-        const Vec3<T> u(cross(right, forward));
+        const Vec3<T> forward = normalize(target - eye);
+        const Vec3<T> right = normalize(cross(forward, up));
+        const Vec3<T> u = normalize(cross(right, forward));
     
         Mat4<T> result(1.0f);
         result[0][0] = right.x;
